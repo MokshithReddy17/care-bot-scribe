@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Send } from "lucide-react";
+import { toast } from "@/components/ui/sonner";
 
 interface Message {
   id: string;
@@ -44,24 +45,47 @@ const DoctorChat = () => {
     content: "Hi! I'm your AI health assistant. Tell me your symptoms and goals, and I'll suggest next steps. This is not medical advice.",
   }]);
   const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const send = () => {
+  const send = async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || isSending) return;
     const user: Message = { id: crypto.randomUUID(), role: "user", content: text };
     setMessages((m) => [...m, user]);
     setInput("");
+    setIsSending(true);
 
-    // Simulated agent response
-    setTimeout(() => {
+    try {
+      const res = await fetch("/functions/v1/ai-doctor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [...messages, user].map(({ role, content }) => ({ role, content })),
+        }),
+      });
+
+      if (!res.ok) throw new Error(`LLM request failed: ${res.status}`);
+      const data = await res.json();
+      const replyText: string = data.reply || "Sorry, I couldn't generate a response.";
+      const reply: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: replyText,
+      };
+      setMessages((m) => [...m, reply]);
+    } catch (err) {
+      console.error(err);
+      toast("Falling back to local suggestions. Connect an API key for real LLM replies.");
       const reply: Message = {
         id: crypto.randomUUID(),
         role: "assistant",
         content: analyzeSymptoms(text),
       };
       setMessages((m) => [...m, reply]);
-    }, 400);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   useEffect(() => {
@@ -106,8 +130,10 @@ const DoctorChat = () => {
               }}
               placeholder="Describe your symptoms…"
               aria-label="Message"
+              disabled={isSending}
+              aria-busy={isSending}
             />
-            <Button onClick={send} disabled={!canSend} variant="default">
+            <Button onClick={send} disabled={!canSend || isSending} variant="default">
               <Send className="opacity-90" />
               <span className="sr-only">Send</span>
             </Button>
