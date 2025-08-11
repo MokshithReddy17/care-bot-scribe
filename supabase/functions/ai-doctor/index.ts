@@ -42,14 +42,23 @@ Deno.serve(async (req: Request) => {
 
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    const PERPLEXITY_API_KEY = Deno.env.get("PERPLEXITY_API_KEY");
 
-    const chosenProvider = provider || (OPENAI_API_KEY ? "openai" : ANTHROPIC_API_KEY ? "anthropic" : undefined);
+    const chosenProvider =
+      provider ||
+      (OPENAI_API_KEY
+        ? "openai"
+        : ANTHROPIC_API_KEY
+        ? "anthropic"
+        : PERPLEXITY_API_KEY
+        ? "perplexity"
+        : undefined);
 
     if (!chosenProvider) {
       return new Response(
         JSON.stringify({
           error:
-            "No provider configured. Please add OPENAI_API_KEY or ANTHROPIC_API_KEY to Supabase secrets and redeploy the function.",
+            "No provider configured. Add OPENAI_API_KEY or ANTHROPIC_API_KEY or PERPLEXITY_API_KEY to Supabase secrets and redeploy the function.",
         }),
         { status: 400, headers }
       );
@@ -95,6 +104,42 @@ Deno.serve(async (req: Request) => {
 
       const data = await resp.json();
       const reply = data?.choices?.[0]?.message?.content ?? "";
+      return new Response(JSON.stringify({ reply }), { status: 200, headers });
+    }
+
+    // Perplexity
+    if (chosenProvider === "perplexity") {
+      if (!PERPLEXITY_API_KEY) {
+        return new Response(JSON.stringify({ error: "PERPLEXITY_API_KEY not set" }), { status: 400, headers });
+      }
+
+      const pplxMessages = [
+        { role: "system", content: systemPrompt },
+        ...messages.map((m) => ({ role: m.role as "user" | "assistant" | "system", content: m.content })),
+      ];
+
+      const pResp = await fetch("https://api.perplexity.ai/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${PERPLEXITY_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: model || "llama-3.1-sonar-small-128k-online",
+          messages: pplxMessages,
+          temperature: 0.2,
+          top_p: 0.9,
+          max_tokens: 800,
+        }),
+      });
+
+      if (!pResp.ok) {
+        const errText = await pResp.text();
+        return new Response(JSON.stringify({ error: `Perplexity error: ${errText}` }), { status: 500, headers });
+      }
+
+      const pData = await pResp.json();
+      const reply = pData?.choices?.[0]?.message?.content ?? "";
       return new Response(JSON.stringify({ reply }), { status: 200, headers });
     }
 
